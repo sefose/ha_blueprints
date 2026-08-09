@@ -1,6 +1,6 @@
 blueprint:
-  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Dynamisch)"
-  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet durch eine beliebige Liste von Szenen."
+  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Original)"
+  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet durch belibig viele Szenen."
   domain: automation
   input:
     hue_device:
@@ -18,14 +18,13 @@ blueprint:
             domain: light
     scene_list:
       name: Szenen-Liste
-      description: "Wähle belibig viele Szenen aus (in der gewünschten Reihenfolge)"
+      description: "Wähle beliebig viele Szenen aus"
       selector:
         entity:
           domain: scene
           multiple: true
     reset_timeout:
       name: Reset-Zeitfenster (Sekunden)
-      description: "Nach wie vielen Sekunden Inaktivität soll beim nächsten Druck wieder Szene 1 starten?"
       default: 10
       selector:
         number:
@@ -33,12 +32,11 @@ blueprint:
           max: 300
           unit_of_measurement: "s"
 
-# restart erlaubt es Taste 1, die Szenen-Schleife AUGENBLICKLICH zu beenden
 mode: restart
 max_exceeded: silent
 
 trigger:
-  # --- Taste 1 (Oben / An) ---
+  # --- Taste 1 (Oben) ---
   - platform: device
     domain: mqtt
     device_id: !input hue_device
@@ -46,7 +44,7 @@ trigger:
     subtype: on_press
     id: taste_1
 
-  # --- Taste 4 (Unten / Aus) ---
+  # --- Taste 4 (Unten) ---
   - platform: device
     domain: mqtt
     device_id: !input hue_device
@@ -63,7 +61,7 @@ trigger:
 
 action:
   - choose:
-      # --- TASTE 1: SOFORT AUSSCHALTEN ---
+      # --- AKTION FÜR TASTE 1: LICHT AUS ---
       - conditions:
           - condition: trigger
             id: taste_1
@@ -71,7 +69,7 @@ action:
           - action: light.turn_off
             target: !input light_target
 
-      # --- TASTE 4: SZENEN DURCHSCHALTEN ---
+      # --- AKTION FÜR TASTE 4: SZENEN DURCHSCHALTEN ---
       - conditions:
           - condition: trigger
             id: taste_4
@@ -79,12 +77,12 @@ action:
           - repeat:
               for_each: !input scene_list
               sequence:
-                # 1. Szene aus der Liste aktivieren
+                # 1. Szene aktivieren
                 - action: scene.turn_on
                   target:
                     entity_id: "{{ repeat.item }}"
 
-                # 2. Warten auf den NÄCHSTEN Druck auf Taste 4 ODER Ausschalten durch Taste 1
+                # 2. Warten auf NÄCHSTEN Druck auf Taste 4
                 - wait_for_trigger:
                     - platform: device
                       domain: mqtt
@@ -96,21 +94,6 @@ action:
                       device_id: !input hue_device
                       type: action
                       subtype: off_press
-                    - platform: device
-                      domain: mqtt
-                      device_id: !input hue_device
-                      type: action
-                      subtype: on_press
                   timeout:
                     seconds: !input reset_timeout
                   continue_on_timeout: false
-
-                # 3. Wenn Taste 1 während des Wartens gedrückt wurde -> Licht aus & Schleife stoppen!
-                - if:
-                    - condition: template
-                      value_template: >
-                        {{ wait.trigger is not none and wait.trigger.event.data.type == 'on_press' }}
-                  then:
-                    - action: light.turn_off
-                      target: !input light_target
-                    - stop: "Ausgeschaltet mit Taste 1"
