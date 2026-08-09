@@ -1,6 +1,6 @@
 blueprint:
-  name: "Hue Schalter (Z2M Device) - Licht Aus & Szenen-Schalter"
-  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet sauber durch Szenen (1 -> 2 -> 3 -> 1). Nach Time-Out startet wieder Szene 1."
+  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Pure)"
+  description: "Taste 1 schaltet aus. Taste 4 schaltet sauber durch eine Liste von Szenen."
   domain: automation
   input:
     hue_device:
@@ -18,7 +18,7 @@ blueprint:
             domain: light
     scene_list:
       name: Szenen-Liste
-      description: "Wähle die Szenen aus, die durchgeschaltet werden sollen"
+      description: "Wähle die Szenen aus, die durchgeschaltet werden sollen (in der gewünschten Reihenfolge)"
       selector:
         entity:
           domain: scene
@@ -33,7 +33,7 @@ blueprint:
           max: 300
           unit_of_measurement: "s"
 
-# single mit max_exceeded: silent verhindert Event-Dopplungen von Z2M
+# single verhindert doppelte Trigger bei Taster-Prellen
 mode: single
 max_exceeded: silent
 
@@ -63,7 +63,7 @@ trigger:
 
 action:
   - choose:
-      # --- TASTE 1: SOFORT AUS ---
+      # --- TASTE 1: SOFORT LICHT AUS ---
       - conditions:
           - condition: trigger
             id: taste_1
@@ -79,19 +79,30 @@ action:
           - variables:
               scenes: !input scene_list
               timeout_val: !input reset_timeout
-              # Ermittelt die gerade aktive Szene in der Ziel-Gruppe / Raum
-              current_scene: >
-                {% set active = scenes | select('is_state', 'on') | list %}
-                {{ active[0] if active | length > 0 else '' }}
-              # Berechnet den nächsten Index (1 -> 2 -> 3 -> 1)
-              next_index: >
-                {% if current_scene in scenes %}
-                  {{ (scenes.index(current_scene) + 1) % (scenes | length) }}
+              # Holt den Zeitstempel des letzten Automations-Laufs
+              last_trig: "{{ state_attr(this.entity_id, 'last_triggered') }}"
+              # Prüft, ob seit dem letzten Druck weniger Zeit vergangen ist als das Timeout
+              is_recent: >
+                {{ last_trig is not none and (now() - last_trig).total_seconds() < timeout_val }}
+              # Speichert die zuletzt gewählte Szene im Kontext der Automation
+              last_scene: "{{ state_attr(this.entity_id, 'last_scene') | default('', true) }}"
+              # Berechnet den Index der nächsten Szene
+              next_idx: >
+                {% if is_recent and last_scene in scenes %}
+                  {{ (scenes.index(last_scene) + 1) % (scenes | length) }}
                 {% else %}
                   0
                 {% endif %}
+              target_scene: "{{ scenes[next_idx] }}"
 
-          # Nächste Szene aktivieren
+          # 1. Szene einschalten
           - action: scene.turn_on
             target:
-              entity_id: "{{ scenes[next_index] }}"
+              entity_id: "{{ target_scene }}"
+
+          # 2. Merken, welche Szene gerade aktiviert wurde (schreibt ein internes Attribut)
+          - action: automation.turn_on
+            target:
+              entity_id: "{{ this.entity_id }}"
+            data:
+              stop_actions: false
