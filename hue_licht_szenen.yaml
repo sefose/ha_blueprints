@@ -1,6 +1,6 @@
 blueprint:
-  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Pure)"
-  description: "Taste 1 schaltet aus. Taste 4 schaltet sauber durch eine Liste von Szenen."
+  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Dynamisch)"
+  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet durch eine beliebige Liste von Szenen."
   domain: automation
   input:
     hue_device:
@@ -18,7 +18,7 @@ blueprint:
             domain: light
     scene_list:
       name: Szenen-Liste
-      description: "Wähle die Szenen aus, die durchgeschaltet werden sollen (in der gewünschten Reihenfolge)"
+      description: "Wähle belibig viele Szenen aus (in der gewünschten Reihenfolge)"
       selector:
         entity:
           domain: scene
@@ -33,12 +33,12 @@ blueprint:
           max: 300
           unit_of_measurement: "s"
 
-# single verhindert doppelte Trigger bei Taster-Prellen
-mode: single
+# restart erlaubt es Taste 1, die Szenen-Schleife AUGENBLICKLICH zu beenden
+mode: restart
 max_exceeded: silent
 
 trigger:
-  # --- Taste 1 (Oben) ---
+  # --- Taste 1 (Oben / An) ---
   - platform: device
     domain: mqtt
     device_id: !input hue_device
@@ -46,7 +46,7 @@ trigger:
     subtype: on_press
     id: taste_1
 
-  # --- Taste 4 (Unten) ---
+  # --- Taste 4 (Unten / Aus) ---
   - platform: device
     domain: mqtt
     device_id: !input hue_device
@@ -63,7 +63,7 @@ trigger:
 
 action:
   - choose:
-      # --- TASTE 1: SOFORT LICHT AUS ---
+      # --- TASTE 1: SOFORT AUSSCHALTEN ---
       - conditions:
           - condition: trigger
             id: taste_1
@@ -76,33 +76,41 @@ action:
           - condition: trigger
             id: taste_4
         sequence:
-          - variables:
-              scenes: !input scene_list
-              timeout_val: !input reset_timeout
-              # Holt den Zeitstempel des letzten Automations-Laufs
-              last_trig: "{{ state_attr(this.entity_id, 'last_triggered') }}"
-              # Prüft, ob seit dem letzten Druck weniger Zeit vergangen ist als das Timeout
-              is_recent: >
-                {{ last_trig is not none and (now() - last_trig).total_seconds() < timeout_val }}
-              # Speichert die zuletzt gewählte Szene im Kontext der Automation
-              last_scene: "{{ state_attr(this.entity_id, 'last_scene') | default('', true) }}"
-              # Berechnet den Index der nächsten Szene
-              next_idx: >
-                {% if is_recent and last_scene in scenes %}
-                  {{ (scenes.index(last_scene) + 1) % (scenes | length) }}
-                {% else %}
-                  0
-                {% endif %}
-              target_scene: "{{ scenes[next_idx] }}"
+          - repeat:
+              for_each: !input scene_list
+              sequence:
+                # 1. Szene aus der Liste aktivieren
+                - action: scene.turn_on
+                  target:
+                    entity_id: "{{ repeat.item }}"
 
-          # 1. Szene einschalten
-          - action: scene.turn_on
-            target:
-              entity_id: "{{ target_scene }}"
+                # 2. Warten auf den NÄCHSTEN Druck auf Taste 4 ODER Ausschalten durch Taste 1
+                - wait_for_trigger:
+                    - platform: device
+                      domain: mqtt
+                      device_id: !input hue_device
+                      type: action
+                      subtype: hue_press
+                    - platform: device
+                      domain: mqtt
+                      device_id: !input hue_device
+                      type: action
+                      subtype: off_press
+                    - platform: device
+                      domain: mqtt
+                      device_id: !input hue_device
+                      type: action
+                      subtype: on_press
+                  timeout:
+                    seconds: !input reset_timeout
+                  continue_on_timeout: false
 
-          # 2. Merken, welche Szene gerade aktiviert wurde (schreibt ein internes Attribut)
-          - action: automation.turn_on
-            target:
-              entity_id: "{{ this.entity_id }}"
-            data:
-              stop_actions: false
+                # 3. Wenn Taste 1 während des Wartens gedrückt wurde -> Licht aus & Schleife stoppen!
+                - if:
+                    - condition: template
+                      value_template: >
+                        {{ wait.trigger is not none and wait.trigger.event.data.type == 'on_press' }}
+                  then:
+                    - action: light.turn_off
+                      target: !input light_target
+                    - stop: "Ausgeschaltet mit Taste 1"
