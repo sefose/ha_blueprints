@@ -1,0 +1,97 @@
+blueprint:
+  name: "Hue Schalter (Z2M Device) - Licht Aus & Szenen-Schalter"
+  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet sauber durch Szenen (1 -> 2 -> 3 -> 1). Nach Time-Out startet wieder Szene 1."
+  domain: automation
+  input:
+    hue_device:
+      name: Hue Schalter
+      description: "Wähle das Hue Schalter Gerät aus"
+      selector:
+        device:
+          integration: mqtt
+    light_target:
+      name: Ziel (Licht oder Raum)
+      description: "Das Licht oder der Raum, der ausgeschaltet werden soll"
+      selector:
+        target:
+          entity:
+            domain: light
+    scene_list:
+      name: Szenen-Liste
+      description: "Wähle die Szenen aus, die durchgeschaltet werden sollen"
+      selector:
+        entity:
+          domain: scene
+          multiple: true
+    reset_timeout:
+      name: Reset-Zeitfenster (Sekunden)
+      description: "Nach wie vielen Sekunden Inaktivität soll beim nächsten Druck wieder Szene 1 starten?"
+      default: 10
+      selector:
+        number:
+          min: 2
+          max: 300
+          unit_of_measurement: "s"
+
+# single mit max_exceeded: silent verhindert Event-Dopplungen von Z2M
+mode: single
+max_exceeded: silent
+
+trigger:
+  # --- Taste 1 (Oben) ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: on_press
+    id: taste_1
+
+  # --- Taste 4 (Unten) ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: hue_press
+    id: taste_4
+
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: off_press
+    id: taste_4
+
+action:
+  - choose:
+      # --- TASTE 1: SOFORT AUS ---
+      - conditions:
+          - condition: trigger
+            id: taste_1
+        sequence:
+          - action: light.turn_off
+            target: !input light_target
+
+      # --- TASTE 4: SZENEN DURCHSCHALTEN ---
+      - conditions:
+          - condition: trigger
+            id: taste_4
+        sequence:
+          - variables:
+              scenes: !input scene_list
+              timeout_val: !input reset_timeout
+              # Ermittelt die gerade aktive Szene in der Ziel-Gruppe / Raum
+              current_scene: >
+                {% set active = scenes | select('is_state', 'on') | list %}
+                {{ active[0] if active | length > 0 else '' }}
+              # Berechnet den nächsten Index (1 -> 2 -> 3 -> 1)
+              next_index: >
+                {% if current_scene in scenes %}
+                  {{ (scenes.index(current_scene) + 1) % (scenes | length) }}
+                {% else %}
+                  0
+                {% endif %}
+
+          # Nächste Szene aktivieren
+          - action: scene.turn_on
+            target:
+              entity_id: "{{ scenes[next_index] }}"

@@ -1,0 +1,135 @@
+blueprint:
+  name: "Hue Schalter (Z2M Device) - Rollladen Steuerung (Direkt-Stopp)"
+  description: "Steuert Rollläden mit Taste 2 & 3. Ein erneuter Druck stoppt."
+  domain: automation
+  input:
+    hue_device:
+      name: Hue Schalter
+      description: "Wähle das Hue Schalter Gerät aus"
+      selector:
+        device:
+          integration: mqtt
+    target_cover:
+      name: Rollladen
+      description: "Der zu steuernde Rollladen"
+      selector:
+        target:
+          entity:
+            domain: cover
+    travel_time:
+      name: Maximale Fahrzeit (Sekunden)
+      default: 20
+      selector:
+        number:
+          min: 3
+          max: 120
+          unit_of_measurement: "s"
+    pos_long_up:
+      name: Position bei langem Drücken (Taste 2 - Oben)
+      default: 80
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+    pos_long_down:
+      name: Position bei langem Drücken (Taste 3 - Unten)
+      default: 20
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  # --- Taste 2 Kurz ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: up_press
+    id: hoch_kurz
+
+  # --- Taste 2 Lang ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: up_hold
+    id: hoch_lang
+
+  # --- Taste 3 Kurz ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: down_press
+    id: runter_kurz
+
+  # --- Taste 3 Lang ---
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: down_hold
+    id: runter_lang
+
+action:
+  # 1. Befehl senden (Fahrt starten)
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: hoch_kurz
+        sequence:
+          - action: cover.open_cover
+            target: !input target_cover
+
+      - conditions:
+          - condition: trigger
+            id: hoch_lang
+        sequence:
+          - action: cover.set_cover_position
+            target: !input target_cover
+            data:
+              position: !input pos_long_up
+
+      - conditions:
+          - condition: trigger
+            id: runter_kurz
+        sequence:
+          - action: cover.close_cover
+            target: !input target_cover
+
+      - conditions:
+          - condition: trigger
+            id: runter_lang
+        sequence:
+          - action: cover.set_cover_position
+            target: !input target_cover
+            data:
+              position: !input pos_long_down
+
+  # 2. Warten: Entweder erneut Taste drücken (STOPP) ODER Fahrzeit abwarten (ENDE)
+  - wait_for_trigger:
+      - platform: device
+        domain: mqtt
+        device_id: !input hue_device
+        type: action
+        subtype: up_press
+      - platform: device
+        domain: mqtt
+        device_id: !input hue_device
+        type: action
+        subtype: down_press
+    timeout:
+      seconds: !input travel_time
+    continue_on_timeout: false
+
+  # 3. Wenn während des Wartens eine Taste gedrückt wurde -> Stoppen!
+  - action: cover.stop_cover
+    target: !input target_cover
