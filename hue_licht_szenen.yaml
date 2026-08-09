@@ -1,6 +1,6 @@
 blueprint:
-  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter (Original)"
-  description: "Taste 1 schaltet sofort AUS. Taste 4 schaltet durch belibig viele Szenen."
+  name: "Hue Schalter (Z2M) - Licht Aus & Szenen-Schalter"
+  description: "Taste 1 schaltet aus. Taste 4 schaltet durch Szenen."
   domain: automation
   input:
     hue_device:
@@ -32,7 +32,8 @@ blueprint:
           max: 300
           unit_of_measurement: "s"
 
-mode: restart
+# WICHTIG: single verhindert, dass die Automation sich bei schnellem Drücken selbst abschießt
+mode: single
 max_exceeded: silent
 
 trigger:
@@ -43,6 +44,12 @@ trigger:
     type: action
     subtype: on_press
     id: taste_1
+  - platform: device
+    domain: mqtt
+    device_id: !input hue_device
+    type: action
+    subtype: up_press
+    id: taste_1
 
   # --- Taste 4 (Unten) ---
   - platform: device
@@ -51,7 +58,6 @@ trigger:
     type: action
     subtype: hue_press
     id: taste_4
-
   - platform: device
     domain: mqtt
     device_id: !input hue_device
@@ -82,18 +88,43 @@ action:
                   target:
                     entity_id: "{{ repeat.item }}"
 
-                # 2. Warten auf NÄCHSTEN Druck auf Taste 4
+                # 2. Warten auf Taste 4 (Weiter) ODER Taste 1 (Abbruch)
                 - wait_for_trigger:
+                    # -- Taste 4 --
                     - platform: device
                       domain: mqtt
                       device_id: !input hue_device
                       type: action
                       subtype: hue_press
+                      id: next
                     - platform: device
                       domain: mqtt
                       device_id: !input hue_device
                       type: action
                       subtype: off_press
+                      id: next
+                    # -- Taste 1 --
+                    - platform: device
+                      domain: mqtt
+                      device_id: !input hue_device
+                      type: action
+                      subtype: on_press
+                      id: stop
+                    - platform: device
+                      domain: mqtt
+                      device_id: !input hue_device
+                      type: action
+                      subtype: up_press
+                      id: stop
                   timeout:
                     seconds: !input reset_timeout
                   continue_on_timeout: false
+
+                # 3. Prüfen, was gedrückt wurde: Wenn Taste 1 gedrückt wurde -> Licht aus & Schleife stoppen
+                - if:
+                    - condition: template
+                      value_template: "{{ wait.trigger is not none and wait.trigger.id == 'stop' }}"
+                  then:
+                    - action: light.turn_off
+                      target: !input light_target
+                    - stop: "Abbruch und Ausgeschaltet mit Taste 1"
