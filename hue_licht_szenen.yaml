@@ -44,12 +44,6 @@ trigger:
     type: action
     subtype: on_press
     id: taste_1
-  - platform: device
-    domain: mqtt
-    device_id: !input hue_device
-    type: action
-    subtype: up_press
-    id: taste_1
 
   # --- Taste 4 (Unten) ---
   - platform: device
