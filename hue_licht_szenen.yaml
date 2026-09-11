@@ -108,7 +108,7 @@ action:
                       domain: mqtt
                       device_id: !input hue_device
                       type: action
-                      subtype: up_press
+                      subtype: on_hold
                       id: stop
                   timeout:
                     seconds: !input reset_timeout
